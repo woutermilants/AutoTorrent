@@ -1,0 +1,11 @@
+<component name="libraryTable">
+  <library name="gson-2.2.4">
+    <CLASSES>
+      <root url="jar://$PROJECT_DIR$/src/gson-2.2.4.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="file://$USER_HOME$/AppData/Local/Temp/intellijad" />
+    </SOURCES>
+  </library>
+</component>

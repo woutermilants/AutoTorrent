@@ -1,0 +1,11 @@
+package parser.data;
+
+/**
+ * Created with IntelliJ IDEA.
+ * User: Wouter
+ * Date: 4/03/15
+ * Time: 17:17
+ * To change this template use File | Settings | File Templates.
+ */
+public class ServerSettingsData {
+}

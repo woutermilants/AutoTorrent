@@ -1,0 +1,166 @@
+package parser.impl;
+
+import Logging.DefaultTomcatLogger;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
+import parser.TorrentSiteParser;
+import parser.data.TorrentData;
+import parser.torrentsiteinfo.SearchType;
+import parser.torrentsiteinfo.TorrentSite;
+
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
+import java.io.IOException;
+import java.net.MalformedURLException;
+import java.util.ArrayList;
+import java.util.Collection;
+
+import static com.google.common.base.Preconditions.checkArgument;
+
+/**
+ * Created by Wouter
+ */
+public class KickAssParser extends TorrentSiteParser {
+
+    private org.w3c.dom.Element rootElement;
+    private Collection<String> kickassLinks = new ArrayList<String>();
+    private DefaultTomcatLogger logger = new DefaultTomcatLogger();
+    private org.w3c.dom.Document xmlDoc;
+
+    public KickAssParser() {
+        this.xmlDoc = createXmlFile();
+    }
+
+    @Override
+    public org.w3c.dom.Document parseTorrent(String searchParam, int minimumSeeders, SearchType searchType) {
+
+        Document urlDoc = getJsoupDocumentFromUrl(searchParam, searchType);
+
+        for (Element element : urlDoc.getElementsByAttributeValueStarting("id", "torrent_" + searchParam)) {
+            TorrentData torrentData = new TorrentData();
+
+            torrentData.setName(element.getElementsByClass("cellMainLink").text());
+            torrentData.setMagnet(element.getElementsByClass("imagnet").get(0).attr("href"));
+            torrentData.setSize(element.getElementsByClass("nobr").get(0).text());
+            torrentData.setLeechers(element.getElementsByClass("red").get(1).text());
+            torrentData.setSeeders(element.getElementsByClass("green").get(0).text());
+
+            // torrentName elements
+            org.w3c.dom.Element mediaTag;
+            if (searchType.equals("movie")) {
+                mediaTag = xmlDoc.createElement("movie");
+            } else {
+                mediaTag = xmlDoc.createElement("tv-show");
+            }
+
+
+            rootElement.appendChild(mediaTag);
+            addDataToXml(xmlDoc, searchParam, torrentData, mediaTag);
+        }
+        return xmlDoc;
+    }
+
+    private Document getJsoupDocumentFromUrl(String searchParam, SearchType searchType) {
+        logger.writeInfoToLog(searchParam + " " + searchType);
+        Document urlDoc = null;
+        String activeUrl = "";
+        //this.xmlDoc = xmlDoc;
+        activeUrl = getActiveTorrentSiteAdress(activeUrl);
+
+        checkArgument(activeUrl != null);
+
+        String searchTerm = null;
+        searchTerm = activeUrl + "/usearch/" + removeSpaces(searchParam) + addFilterOptions(searchType);
+
+        try {
+            urlDoc = Jsoup.connect(searchTerm).get();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        return urlDoc;
+    }
+
+    private String addFilterOptions(SearchType searchType) {
+        String filter = "";
+        if (SearchType.TVSHOW.equals(searchType)) {
+            filter = "%20category:tv";
+        } else if (SearchType.MOVIE.equals(searchType)) {
+            filter = "%20category:movie";
+        }
+
+        return filter;
+    }
+
+    private String getActiveTorrentSiteAdress(String activeUrl) {
+        for (String pburl : loadTorrentSiteLinks(TorrentSite.KICKASS)) {
+            try {
+                if (Jsoup.connect(pburl).get() != null) {
+                    activeUrl = pburl;
+                    break;
+                } else {
+                    logger.writeErrorToLog("ERROR : Unable to connect to " + pburl);
+                }
+            } catch (MalformedURLException e) {
+                logger.writeErrorToLog("Error connecting to host (MalformedURLException)");
+            } catch (IOException e) {
+                logger.writeErrorToLog(e.getMessage());
+            }
+        }
+        return activeUrl;
+    }
+
+    private void addDataToXml(org.w3c.dom.Document xmlDoc, String searchParam, TorrentData torrentData, org.w3c.dom.Element mediaTag) {
+        //Add name tag
+        mediaTag.setAttribute("name", searchParam);
+
+        // torrentname elements
+        org.w3c.dom.Element torrentname = xmlDoc.createElement("name");
+        torrentname.appendChild(xmlDoc.createTextNode(torrentData.getName() != null ? torrentData.getName() : ""));
+        mediaTag.appendChild(torrentname);
+
+        // magnet elements
+        org.w3c.dom.Element torrentmagnet = xmlDoc.createElement("magnet");
+        torrentmagnet.appendChild(xmlDoc.createTextNode(torrentData.getMagnet() != null ? torrentData.getMagnet() : ""));
+        mediaTag.appendChild(torrentmagnet);
+
+        // seeders elements
+        org.w3c.dom.Element seeders = xmlDoc.createElement("seeders");
+        seeders.appendChild(xmlDoc.createTextNode(torrentData.getSeeders() != null ? torrentData.getSeeders() : ""));
+        mediaTag.appendChild(seeders);
+
+        // leechers elements
+        org.w3c.dom.Element leechers = xmlDoc.createElement("leechers");
+        leechers.appendChild(xmlDoc.createTextNode(torrentData.getLeechers() != null ? torrentData.getLeechers() : ""));
+        mediaTag.appendChild(leechers);
+
+        // upload info elemetns
+        org.w3c.dom.Element uploadinfo = xmlDoc.createElement("uploadinfo");
+        uploadinfo.appendChild(xmlDoc.createTextNode(torrentData.getUploaded() != null ? torrentData.getUploaded() : ""));
+        mediaTag.appendChild(uploadinfo);
+    }
+
+    private org.w3c.dom.Document createXmlFile() {
+        //org.w3c.dom.Document xmlDoc = null;
+        DocumentBuilderFactory docFactory = DocumentBuilderFactory.newInstance();
+        DocumentBuilder docBuilder = null;
+        try {
+            docBuilder = docFactory.newDocumentBuilder();
+        } catch (ParserConfigurationException e) {
+            e.printStackTrace();
+        }
+        org.w3c.dom.Element rootEl;
+        if (docBuilder != null) {
+            xmlDoc = docBuilder.newDocument();
+            rootEl = xmlDoc.createElement("torrents");
+            xmlDoc.appendChild(rootEl);
+        } else {
+            rootEl = null;
+        }
+        rootElement = rootEl;
+
+        return xmlDoc;
+    }
+}

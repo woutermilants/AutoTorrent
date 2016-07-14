@@ -1,0 +1,5 @@
+<form method="post" action="/torrentgen/mediaxml">
+searchterm:<input type="text" name="searchterm" size="120" />
+searchtype:<input type="text" name="searchtype" size="120" />
+<input type="submit" value="Download magnet" /> 
+</form>

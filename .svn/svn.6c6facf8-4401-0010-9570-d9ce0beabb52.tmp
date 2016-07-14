@@ -1,0 +1,335 @@
+package parser;
+
+/**
+ * Created By Wouter
+ */
+
+import javax.servlet.ServletContextEvent;
+import javax.servlet.ServletContextListener;
+import javax.servlet.ServletException;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
+import javax.xml.transform.Transformer;
+import javax.xml.transform.TransformerException;
+import javax.xml.transform.TransformerFactory;
+import javax.xml.transform.dom.DOMSource;
+import javax.xml.transform.stream.StreamResult;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.net.MalformedURLException;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Date;
+import java.util.List;
+import java.util.Timer;
+import java.util.TimerTask;
+
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
+import org.jsoup.select.Elements;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+
+public class torrentParser extends HttpServlet implements ServletContextListener {
+
+    static org.w3c.dom.Document xmlDoc;
+    static org.w3c.dom.Element rootElement;
+    //String[] pblinks = new String[]{"http://194.71.107.80", "http://www.proxybay.eu", "http://mypirateproxy.com", "http://thepiratebay.ar.com"};
+    Collection<String> pbLinks = new ArrayList<String>();
+
+    //Executed on server startup
+    @Override
+    public void contextInitialized(ServletContextEvent servletContextEvent) {
+        final torrentParser parser = new torrentParser();
+        Timer timer = new Timer();
+        TimerTask timedTask = new TimerTask() {
+
+            @Override
+            public void run() {
+                createXmlFile();
+                Collection<String> tvShows = loadTvShowList();
+                pbLinks = loadPirateBayLinks();
+
+                for (String tvShow : tvShows) {
+                    writeInfoToLog("STARTED loading torrents for: " + tvShow.toUpperCase());
+                    parser.parseTorrent(pbLinks, tvShow, 100);
+                    writeInfoToLog("FINISHED loading torrents for: " + tvShow.toUpperCase() + "\n");
+                }
+
+                try {
+                    writeToXml(xmlDoc);
+                    writeInfoToLog("--- FINISHED writing results to XML file --- \n");
+                } catch (TransformerException e) {
+                    e.printStackTrace();
+                }
+            }
+        };
+
+        // schedule the task to run starting now and then every x seconds
+        timer.schedule(timedTask, 0l, 1000 * 60 * 30);     //30 minutes
+    }
+
+    @Override
+    protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
+        writeInfoToLog("READING url parameters...");
+        String magnet = req.getParameter("magnet");
+        System.out.println(magnet);
+        //executeShellCommand();
+    }
+
+    @Override
+    public void contextDestroyed(ServletContextEvent servletContextEvent) {
+        writeInfoToLog("TOMCAT SERVER IS SHUTTING DOWN");
+    }
+
+    private void parseTorrent(Collection<String> pbLinks, String searchParam, int minimumSeeders) {
+        Document urlDoc;
+        String activeUrl = "";
+        for (String pburl : pbLinks) {
+            try {
+                if (Jsoup.connect(pburl).get() != null) {
+                    activeUrl = pburl;
+                    break;
+                } else {
+                    writeErrorToLog("ERROR : Unable to connect to " + pburl);
+                }
+            } catch (MalformedURLException e) {
+                writeErrorToLog("Error connecting to host (MalformedURLException)");
+            } catch (IOException e) {
+                writeErrorToLog(e.getMessage());
+            }
+        }
+
+        if (activeUrl != null) {
+
+            String searchTerm = activeUrl + "/search/" + removeSpaces(searchParam) + "/0/7/208";
+            try {
+                urlDoc = Jsoup.connect(searchTerm).get();
+
+                // get all links
+                Elements torrents = urlDoc.select("tr");
+                for (Element torrent : torrents) {
+                    Elements torrentdatas = torrent.select("td");
+
+                    if (torrentdatas.size() >= 4) {
+                        String torrentNameData = torrentdatas.get(1).getElementsByClass("detName").text();
+                        String torrentMagnetData = "no magnet link available";
+                        for (Element link : torrentdatas.get(1).getElementsByAttribute("href")) {
+                            if (link.attr("href").startsWith("magnet")) {
+                                torrentMagnetData = link.attr("href");
+                            }
+                        }
+                        int torrentSeedersData = Integer.parseInt(torrentdatas.get(2).text());
+                        int torrentLeechersdata = Integer.parseInt(torrentdatas.get(3).text());
+                        if (torrentSeedersData < minimumSeeders) {
+                            break;
+                        }
+
+                        // torrentName elements
+                        org.w3c.dom.Element serieTag = xmlDoc.createElement("tv-show");
+                        rootElement.appendChild(serieTag);
+
+                        addDataToXml(searchParam, torrentNameData, torrentMagnetData, torrentSeedersData, torrentLeechersdata, serieTag);
+                    }
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        } else {
+            writeErrorToLog("THERE ARE NO AVAILABLE TORRENT URL's");
+        }
+    }
+
+    private void addDataToXml(String searchParam, String torrentNameData, String torrentMagnetData, int torrentSeedersData, int torrentLeechersdata, org.w3c.dom.Element serieTag) {
+        //Add name tag
+        serieTag.setAttribute("name", searchParam);
+
+        // torrentname elements
+        org.w3c.dom.Element torrentname = xmlDoc.createElement("name");
+        torrentname.appendChild(xmlDoc.createTextNode(torrentNameData));
+        serieTag.appendChild(torrentname);
+
+        // magnet elements
+        org.w3c.dom.Element torrentmagnet = xmlDoc.createElement("magnet");
+        torrentmagnet.appendChild(xmlDoc.createTextNode(torrentMagnetData));
+        serieTag.appendChild(torrentmagnet);
+
+        // seeders elements
+        org.w3c.dom.Element seeders = xmlDoc.createElement("seeders");
+        seeders.appendChild(xmlDoc.createTextNode(Integer.toString(torrentSeedersData)));
+        serieTag.appendChild(seeders);
+
+        // leechers elements
+        org.w3c.dom.Element leechers = xmlDoc.createElement("leechers");
+        leechers.appendChild(xmlDoc.createTextNode(Integer.toString(torrentLeechersdata)));
+        serieTag.appendChild(leechers);
+    }
+
+    private static void createXmlFile() {
+        DocumentBuilderFactory docFactory = DocumentBuilderFactory.newInstance();
+        DocumentBuilder docBuilder = null;
+        try {
+            docBuilder = docFactory.newDocumentBuilder();
+        } catch (ParserConfigurationException e) {
+            e.printStackTrace();
+        }
+        org.w3c.dom.Element rootEl;
+        if (docBuilder != null) {
+            xmlDoc = docBuilder.newDocument();
+            rootEl = xmlDoc.createElement("torrents");
+            xmlDoc.appendChild(rootEl);
+        } else {
+            rootEl = null;
+        }
+        rootElement = rootEl;
+    }
+
+    private String removeSpaces(String searchParam) {
+        return searchParam.replace(" ", "%20");
+    }
+
+    private void writeToXml(org.w3c.dom.Document doc) throws TransformerException {
+        // write the content into xml file
+        TransformerFactory transformerFactory = TransformerFactory.newInstance();
+        Transformer transformer = transformerFactory.newTransformer();
+        DOMSource source = new DOMSource(doc);
+
+        //final String currentPath = getServletConfig().getServletContext().getRealPath("/");
+        StreamResult result = new StreamResult(new File("webapps/torrentgen/Results/tvshows.xml"));
+
+        transformer.transform(source, result);
+    }
+
+    private String getTimeStamp() {
+        Date date = new Date();
+        SimpleDateFormat sdf = new SimpleDateFormat("dd/MM/yyyy hh:mm:ss");
+        return sdf.format(date);
+    }
+
+    private void writeInfoToLog(String message) {
+        System.out.println("INFO: " + getTimeStamp() + " " + message);
+    }
+
+    private void writeErrorToLog(String message) {
+        System.out.println("ERROR: " + getTimeStamp() + " " + message);
+    }
+
+    private Collection<String> loadTvShowList() {
+
+        writeInfoToLog("LOADING TV-SHOWS...");
+        ArrayList<String> tvShows = new ArrayList<String>();
+        try {
+
+            File fXmlFile = new File("webapps/Config/Tv-Shows.xml");
+            DocumentBuilderFactory dbFactory = DocumentBuilderFactory.newInstance();
+            DocumentBuilder dBuilder = dbFactory.newDocumentBuilder();
+            org.w3c.dom.Document doc = dBuilder.parse(fXmlFile);
+
+            doc.getDocumentElement().normalize();
+
+            NodeList nList = doc.getElementsByTagName("shows");
+
+            for (int i = 0; i < nList.getLength(); i++) {
+
+                Node nNode = nList.item(i);
+
+                if (nNode.getNodeType() == Node.ELEMENT_NODE) {
+                    org.w3c.dom.Element eElement = (org.w3c.dom.Element) nNode;
+                    NodeList showList = eElement.getElementsByTagName("show");
+                    for (int j = 0; j < showList.getLength(); j++) {
+                        String currentShow = eElement.getElementsByTagName("show").item(j).getTextContent();
+                        writeInfoToLog("Tv-Show : " + currentShow.toUpperCase());
+                        tvShows.add(currentShow);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        writeInfoToLog("FINISHED LOADING TV-SHOWS \n");
+
+        return tvShows;
+    }
+
+    private Collection<String> loadPirateBayLinks() {
+
+        writeInfoToLog("LOADING PirateBay Links...");
+        ArrayList<String> pirateBayLinks = new ArrayList<String>();
+
+        try {
+            File fXmlFile = new File("webapps/Config/PirateBayLinks.xml");
+            DocumentBuilderFactory dbFactory = DocumentBuilderFactory.newInstance();
+            DocumentBuilder dBuilder = dbFactory.newDocumentBuilder();
+            org.w3c.dom.Document doc = dBuilder.parse(fXmlFile);
+
+            doc.getDocumentElement().normalize();
+
+            NodeList nList = doc.getElementsByTagName("link");
+
+            for (int i = 0; i < nList.getLength(); i++) {
+
+                Node nNode = nList.item(i);
+                pirateBayLinks.add(nNode.getTextContent());
+                writeInfoToLog(nNode.getTextContent());
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        writeInfoToLog("FINISHED LOADING PirateBay Links \n");
+
+        return pirateBayLinks;
+    }
+
+    private void loadSettings() {
+        writeInfoToLog("LOADING SETTINGS...");
+    }
+
+    private void executeShellCommand() {
+
+        List<String> commands = new ArrayList<String>();
+        commands.add("screen -d -R testscreen");
+        //Add arguments
+        commands.add("ls -a");
+        System.out.println(commands);
+
+        //Run macro on target
+        ProcessBuilder pb = new ProcessBuilder(commands);
+        pb.directory(new File("."));
+        pb.redirectErrorStream(true);
+        Process process = null;
+        try {
+            process = pb.start();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        //Read output
+        StringBuilder out = new StringBuilder();
+        if (process != null) {
+            BufferedReader br = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            String line = null, previous = null;
+            try {
+                while ((line = br.readLine()) != null)
+                    if (!line.equals(previous)) {
+                        previous = line;
+                        out.append(line).append('\n');
+                        System.out.println(line);
+                    }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+
+    }
+}

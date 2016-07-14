@@ -1,0 +1,95 @@
+package parser;
+
+import Logging.DefaultTomcatLogger;
+
+import javax.servlet.ServletException;
+import javax.servlet.ServletOutputStream;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.xml.transform.Transformer;
+import javax.xml.transform.TransformerConfigurationException;
+import javax.xml.transform.TransformerException;
+import javax.xml.transform.TransformerFactory;
+import javax.xml.transform.dom.DOMSource;
+import javax.xml.transform.stream.StreamResult;
+import java.io.*;
+
+/**
+ * Created by Wouter
+ */
+public class MediaSearch extends HttpServlet {
+
+    @Override
+    protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
+        this.doPost(req, resp);
+    }
+
+    @Override
+    protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
+        DefaultTomcatLogger logger = new DefaultTomcatLogger();
+
+        String mediaSearchTerm = req.getParameter("searchterm");
+        String searchType = req.getParameter("searchtype");
+
+        resp.setContentType("text/html;charset=utf-8");
+        PrintWriter out = resp.getWriter();
+
+        org.w3c.dom.Document searchResult = doSearch(mediaSearchTerm, searchType);
+
+        TransformerFactory transformerFactory = TransformerFactory.newInstance();
+        Transformer transformer = null;
+        try {
+            transformer = transformerFactory.newTransformer();
+
+            DOMSource source = new DOMSource(searchResult);
+
+            File xml = new File("searchresult.xml");
+            StreamResult result = new StreamResult(xml);
+            transformer.transform(source, new StreamResult(out));
+            //logger.writeInfoToLog(result);
+
+
+            ServletOutputStream stream = null;
+            BufferedInputStream buf = null;
+            try{
+
+                stream = resp.getOutputStream();
+                resp.setContentType("text/xml");
+                resp.addHeader("Content-Disposition","attachment; filename="+xml.getName());
+                resp.setContentLength((int) xml.length());
+
+                FileInputStream input = new FileInputStream(xml);
+                buf = new BufferedInputStream(input);
+                int readBytes = 0;
+
+                //read from the file; write to the ServletOutputStream
+                while((readBytes = buf.read()) != -1)
+                    stream.write(readBytes);
+
+            } catch (IOException ioe){
+                throw new ServletException(ioe.getMessage());
+            } finally {
+                if(stream != null)
+                    stream.close();
+                if(buf != null)
+                    buf.close();
+            }
+        } catch (TransformerConfigurationException e) {
+            e.printStackTrace();
+        } catch (TransformerException e) {
+            e.printStackTrace();
+        }
+        resp.setHeader("test", "test");
+    }
+
+    protected org.w3c.dom.Document doSearch(String mediaSearchTerm, String searchType) {
+
+        DefaultTomcatLogger logger = new DefaultTomcatLogger();
+        PirateParser parser = new PirateParser();
+
+        return parser.parseTorrent(mediaSearchTerm, 50, searchType);
+    }
+
+
+}
